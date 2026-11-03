@@ -27,3 +27,4 @@ backend/data/*.db
 .idea/
 .DS_Store
 *.log
+
