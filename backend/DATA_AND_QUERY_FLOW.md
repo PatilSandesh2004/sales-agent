@@ -28,6 +28,8 @@
  (question, generated_sql, row_count, data, summary_answer)
 ```
 
+**Planner (step 0):** before any SQL is written, `agent/planner.py` asks the LLM (with the live schema) for a JSON plan: `goal`, `tables`, `metric`, and 1-3 `steps`, each a self-contained sub-question. Simple questions get 1 step; multi-part questions (e.g. "compare cities AND give the top category") get one step per part. Each step then goes through Tool 1 -> Tool 2 separately, the plan is passed to the SQL prompt as a hint, and the final answer combines all step results. If the plan can't be parsed, it falls back to a single step with the original question.
+
 **No SQL is hardcoded anywhere.** The LLM writes every query from the user's question and the live schema.
 
 ## 2. The dataset (Excel)
@@ -100,7 +102,8 @@ Greetings ("hi", "help") skip SQL. If the API key is missing, or no working quer
 | `src/models.py` | Live schema description for the prompt |
 | `src/prompts/sql_prompts.py` | SQL, retry and summary prompts |
 | `src/tools/sql_tool.py` | Tool 1 (question → SQL), Tool 2 (execute), validation, retry |
-| `src/agent/sales_agent.py` | Orchestrates the tools and writes the answer |
+| `src/agent/planner.py` | Planner: question + schema -> JSON plan (1-3 steps) |
+| `src/agent/sales_agent.py` | Runs plan steps through the tools and writes the answer |
 | `src/main.py` | Interactive CLI |
 | `../frontend/app.py` | Streamlit UI |
 
@@ -129,4 +132,5 @@ To switch models, change only `LLM_MODEL` in `.env`.
 
 - Answer quality depends on the LLM; the retry loop fixes most SQL errors but not wrong interpretations – always check the displayed SQL.
 - Each question is independent (no conversation memory).
+- The planner adds one extra LLM call per question (plan, then SQL per step, then summary).
 - Data is small and static; the schema sampler is designed for small dimension tables, not large databases.

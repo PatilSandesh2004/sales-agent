@@ -18,7 +18,7 @@ Output rules:
 2. Read-only: never INSERT/UPDATE/DELETE/DROP/ALTER/PRAGMA.
 3. Round money with ROUND(..., 2) and give columns readable aliases.
 4. If the question is "which/top/highest/lowest", ORDER BY the metric and use LIMIT.
-{retry_block}
+{plan_block}{retry_block}
 User Question: {question}
 SQL:"""
 
@@ -39,3 +39,30 @@ Result ({row_count} rows, showing up to {shown}):
 {table}
 
 Answer:"""
+
+PLAN_BLOCK = """
+Analysis plan to follow (from the planner):
+{plan_hint}
+"""
+
+PLANNER_PROMPT = """You are the planner of a sales analytics agent. Decide how to answer the question using the database below.
+
+{schema_info}
+
+Return ONLY a JSON object (no markdown, no explanation) with this shape:
+{{
+  "goal": "one sentence: what the user wants",
+  "tables": ["tables needed"],
+  "metric": "what is measured, e.g. revenue = quantity*unit_price*(1-discount)",
+  "steps": [
+    {{"description": "what this step does", "sub_question": "a self-contained plain-English question answerable by ONE SQL query"}}
+  ]
+}}
+
+Rules:
+- Use 1 step when one SQL query can answer the question (most cases). Use at most {max_steps} steps, only when the question truly has independent parts.
+- Each sub_question must be fully self-contained (no references to other steps) and must only use data that exists in the tables above.
+- If the question cannot be answered from this data, still return one step with the closest answerable sub_question.
+
+Question: {question}
+JSON:"""

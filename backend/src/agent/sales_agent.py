@@ -1,8 +1,10 @@
 """Sales Intelligence Agent: question -> LLM-written SQL -> data -> grounded answer."""
 
+import pandas as pd
 from tools.sql_tool import ask_sales_tool, call_llm, SQLToolError
 from prompts import SUMMARY_PROMPT
-from schema.query_schema import QueryResponse
+from schema.query_schema import QueryResponse, StepResult
+from agent.planner import create_plan
 
 GREETING_WORDS = {"hi", "hello", "hey", "hola", "help", "good morning", "good evening", "good afternoon", "who are you"}
 MAX_ROWS_FOR_SUMMARY = 20
@@ -34,38 +36,60 @@ class SalesAgent:
                 ),
             )
 
+        # Step 0: PLANNER - LLM decides how to answer (1-3 sub-questions)
         try:
-            result = ask_sales_tool(user_question)  # Tool 1 (LLM -> SQL) + Tool 2 (execute)
+            plan = create_plan(user_question)
+            plan_hint = f"Goal: {plan.goal}\nTables: {', '.join(plan.tables)}\nMetric: {plan.metric}"
         except SQLToolError as e:
-            return QueryResponse(
-                question=user_question,
-                generated_sql="-- SQL could not be generated",
-                row_count=0,
-                data=[],
-                summary_answer=f"⚠️ {e}",
-            )
+            return self._error_response(user_question, e)
 
-        df = result["data"]
+        # Steps 1..n: for each plan step -> Tool 1 (LLM -> SQL) + Tool 2 (execute)
+        results = []
+        for step in plan.steps:
+            try:
+                r = ask_sales_tool(step.sub_question, plan_hint=f"{plan_hint}\nThis step: {step.description}")
+            except SQLToolError as e:
+                return self._error_response(user_question, e, plan=plan.model_dump())
+            df = r["data"]
+            results.append(StepResult(
+                description=step.description, sub_question=step.sub_question, sql=r["sql"],
+                row_count=r["row_count"], data=df.to_dict(orient="records") if not df.empty else [],
+            ))
+
+        last = results[-1]
         return QueryResponse(
             question=user_question,
-            generated_sql=result["sql"],
-            row_count=result["row_count"],
-            data=df.to_dict(orient="records") if not df.empty else [],
-            summary_answer=self._create_summary(user_question, result["sql"], df),
+            generated_sql="\n\n".join(r.sql for r in results),
+            row_count=last.row_count,
+            data=last.data,
+            summary_answer=self._create_summary(user_question, results),
+            plan=plan.model_dump(),
+            steps=results,
         )
 
-    def _create_summary(self, question: str, sql: str, df) -> str:
-        """LLM writes the answer from the real result rows; generic fallback if the LLM call fails."""
-        if df.empty:
+    @staticmethod
+    def _error_response(question, error, plan=None) -> QueryResponse:
+        return QueryResponse(
+            question=question, generated_sql="-- SQL could not be generated", row_count=0,
+            data=[], summary_answer=f"⚠️ {error}", plan=plan,
+        )
+
+    def _create_summary(self, question: str, results) -> str:
+        """LLM writes the answer from ALL step results; generic fallback if the LLM call fails."""
+        if all(r.row_count == 0 for r in results):
             return "No matching records were found in the sales data."
-        shown = df.head(MAX_ROWS_FOR_SUMMARY)
+        sql_text = "\n".join(r.sql for r in results)
+        tables = []
+        for i, r in enumerate(results, 1):
+            shown = pd.DataFrame(r.data).head(MAX_ROWS_FOR_SUMMARY)
+            tables.append(f"[Step {i}: {r.description}] ({r.row_count} rows)\n" + (shown.to_string(index=False) if not shown.empty else "(no rows)"))
         try:
             return call_llm(SUMMARY_PROMPT.format(
-                question=question, sql=sql, row_count=len(df), shown=len(shown),
-                table=shown.to_string(index=False),
+                question=question, sql=sql_text, row_count=sum(r.row_count for r in results),
+                shown=MAX_ROWS_FOR_SUMMARY, table="\n\n".join(tables),
             ))
         except Exception:
-            return f"Query returned {len(df)} record(s). See the data table for details."
+            return f"Query returned {results[-1].row_count} record(s). See the data table for details."
 
 
 sales_agent = SalesAgent()

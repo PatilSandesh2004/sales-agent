@@ -55,16 +55,21 @@ if st.button("🚀 Run Query", type="primary"):
             # 1. Answer
             st.success(f"### 💡 Answer:\n{response.summary_answer}")
 
-            # 2. Tool 1: SQL Generated (if SQL was generated)
-            if response.generated_sql and not response.generated_sql.startswith("--"):
-                st.subheader("🤖 Tool 1: Generated SQL Query")
-                st.code(response.generated_sql, language="sql")
+            # 2. Planner
+            if response.plan:
+                st.subheader("🧭 Planner")
+                st.write(f"**Goal:** {response.plan['goal']}")
+                if response.plan.get("metric"):
+                    st.caption(f"Metric: {response.plan['metric']}")
 
-                # 3. Tool 2: Fetched Table
-                st.subheader(f"📊 Tool 2: Fetched Data ({response.row_count} rows)")
-                if response.data:
-                    df = pd.DataFrame(response.data)
-                    st.dataframe(df)
+            # 3. Each executed step: SQL tool + fetched data
+            for i, step in enumerate(response.steps, 1):
+                st.subheader(f"Step {i}: {step.description}")
+                st.caption(f"Sub-question: {step.sub_question}")
+                st.markdown("**🤖 Tool 1: Generated SQL**")
+                st.code(step.sql, language="sql")
+                st.markdown(f"**📊 Tool 2: Fetched Data ({step.row_count} rows)**")
+                if step.data:
+                    st.dataframe(pd.DataFrame(step.data))
                 else:
                     st.info("No matching records found in Excel data.")
-
