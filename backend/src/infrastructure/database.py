@@ -12,6 +12,11 @@ def get_connection() -> sqlite3.Connection:
     return sqlite3.connect(str(DB_PATH))
 
 
+def get_readonly_connection() -> sqlite3.Connection:
+    """Read-only connection: even a bad generated query can never modify the data."""
+    return sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True)
+
+
 def load_excel_to_sqlite():
     """Reads Excel sheets using Pandas and saves each into a table in SQLite."""
     print("📂 Loading Excel sheets into SQLite database...")
